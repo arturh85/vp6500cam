@@ -273,18 +273,22 @@ int main(void)
 	}
 */
 	offset = PRP_BASE % psize;
-	printf("setting buffer size%s / offset: %d", "\n", offset);
+	printf("setting buffer size / offset: %d\n", offset);
 	const size_t buffer_size = 2*352*288;
 
 	printf("allocating %d bytes for camera buffer\n", buffer_size);
-	//u_int32_t camera_buffer = mmap((void*) 0x00, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, PRP_BASE-offset);
-	u_int32_t camera_buffer = malloc(buffer_size);
+
+	u_int32_t camera_buffer_source = malloc(buffer_size);	
+	offset = camera_buffer_source % psize;
+
+	u_int32_t camera_buffer = mmap((void*) 0x00, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, camera_buffer_source-offset);
 
 	if(camera_buffer == NULL) {
    	      printf("can't map camera buffer space\r\n");
               goto EXIT;
 	}
 
+	offset = PRP_BASE % psize;
 	// map local pointer to the calculated base address
 	mem_ptr = mmap((void*) 0x00, offset+132, PROT_READ | PROT_WRITE, MAP_SHARED, fd, PRP_BASE-offset);
 
@@ -311,7 +315,7 @@ int main(void)
 	long sum = 0;
 
 	for(i=0; i<buffer_size/2; i++) {
-		short c =  *((short*)camera_buffer + i);	
+		unsigned char c =  *((unsigned char*)camera_buffer + i);	
 		if(c != 0) {
 			non_white ++;
 			sum += (long) c;
@@ -328,7 +332,7 @@ int main(void)
 
 	// reset destinations to previous backup before we modified them
 	set_prp(backupDest1, backupDest2);
-	free(camera_buffer);
+	free(camera_buffer_source);
 
 	disable_camera();	
 EXIT:
