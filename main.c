@@ -192,6 +192,7 @@ void ex_program(int sig) {
  printf("Wake up call ... !!! - Catched signal: %d ... !!\n", sig);
  disable_camera();
  (void) signal(SIGINT, SIG_DFL);
+ exit(0);
 }
 
 
@@ -296,7 +297,7 @@ int main(void)
 	printf("set_prp(%02x)\n", camera_buffer); 
 	set_prp(camera_buffer, camera_buffer);
 
-	//enable_camera();
+	enable_camera();
 
 	int j;
 
