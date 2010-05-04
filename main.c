@@ -4,10 +4,37 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
+
+#include <signal.h>
 
 #define PRP_BASE	0x10026400
 #define PRP_SIZE	132
 #define FB_START_REG	0x10021000
+
+
+#define		INIT			0x6C01
+#define		SET_CONTRAST		0x6C02
+#define		SET_REGISTER		0x6C03
+#define		START_CAPTURE		0x6C04
+#define		STOP_CAPTURE		0x6C05
+#define		SET_FORMAT		0x6C06
+#define		POWER_ON		0x6C07
+
+
+void ex_program(int sig);
+
+u_int32_t backupDest1;
+u_int32_t backupDest2;
+
+typedef struct _fmt_struct
+{
+	u_int16_t	width;
+	u_int16_t	height;
+	u_int16_t	unknown1;
+	u_int16_t	unknown2;
+};
+
 
 typedef struct _PRP_STRUCT
 {
@@ -51,7 +78,7 @@ struct _PRP_STRUCT *prp_regs;
 void *mem_ptr;
 
 // set the PRP registers, values taken from the product test script
-void set_prp(u_int32_t dest)
+void set_prp(u_int32_t dest1, u_int32_t dest2)
 {
 	prp_regs->PRP_CNTL = 0x3234;
 	prp_regs->PRP_SRC_PIXEL_FORMAT_CNTL = 0x2CA00565;
@@ -60,8 +87,8 @@ void set_prp(u_int32_t dest)
 	prp_regs->PRP_CSC_COEF_345 = 0x0AE2A840;
 	prp_regs->PRP_CSC_COEF_678 = 0x08035829;
 	prp_regs->PRP_SOURCE_LINE_STRIDE = 0x0;
-	prp_regs->PRP_DEST_RGB1_PTR = dest;
-	prp_regs->PRP_DEST_RGB2_PTR = dest;
+	prp_regs->PRP_DEST_RGB1_PTR = dest1;
+	prp_regs->PRP_DEST_RGB2_PTR = dest2;
 	prp_regs->PRP_SOURCE_FRAME_SIZE = 0x01600120;	// 352x288
 
 	prp_regs->PRP_CH1_OUT_IMAGE_SIZE = 0x00B000B0;
@@ -75,6 +102,98 @@ void set_prp(u_int32_t dest)
 
 	prp_regs->PRP_CNTL = 0x2235;
 }
+
+void enable_camera() {
+	int fd, result;
+
+	u_int16_t contrast;
+	struct _fmt_struct format;
+	u_int32_t initreg;
+
+	contrast = 3;
+
+	format.width = 352;
+	format.height = 288;
+	format.unknown1 = 0;
+	format.unknown2 = 0;
+
+	initreg = 0xFFFFFFFF;
+
+	fd = open("/dev/sensor", O_RDWR);
+	if(fd == -1)
+	{
+		printf("can't open /dev/sensor\r\n");
+		goto EXIT2;
+	}
+
+	result = ioctl(fd, POWER_ON);			// power on IOCTL
+	if(result != 0)
+		printf("error in power on IOCTL, got %i\r\n",result);
+
+
+	result = ioctl(fd, INIT, &initreg);		// init IOCTL
+	if(result != 0)
+		printf("error in init IOCTL, got %i\r\n",result);
+
+	result = ioctl(fd, SET_FORMAT, &format);	// set format IOCTL
+	if(result != 0)
+		printf("error in set format IOCTL, got %i\r\n",result);
+
+	result = ioctl(fd, START_CAPTURE);		// cpature start IOCTL
+	if(result != 0)
+		printf("error in start capture IOCTL, got %i\r\n",result);
+
+	result = ioctl(fd, SET_CONTRAST, contrast);	// contrast IOCTL
+	if(result != 0)
+		printf("error in set contrast IOCTL, got %i\r\n",result);
+
+/*
+	result = ioctl(fd, STOP_CAPTURE);		// capture stop IOCTL
+	if(result != 0)
+		printf("error in stop capture IOCTL, got %i\r\n",result);
+*/
+
+EXIT2:
+	if(close(fd) == -1)
+	{
+		printf("can't close /dev/sensor\r\n");
+	}
+	
+	(void) signal(SIGINT, ex_program);
+}
+
+void disable_camera() {
+        int fd, result;
+
+        fd = open("/dev/sensor", O_RDWR);
+        if(fd == -1)
+        {
+                printf("can't open /dev/sensor\r\n");
+                goto EXIT3;
+        }
+
+        result = ioctl(fd, STOP_CAPTURE);               // capture stop IOCTL
+        if(result != 0)
+                printf("error in stop capture IOCTL, got %i\r\n",result);
+	else 
+		printf("successfully disabled camera device with results \n", result);
+
+
+EXIT3:
+        if(close(fd) == -1)
+        {
+                printf("can't close /dev/sensor\r\n");
+        }
+
+}
+
+
+void ex_program(int sig) {
+ printf("Wake up call ... !!! - Catched signal: %d ... !!\n", sig);
+ disable_camera();
+ (void) signal(SIGINT, SIG_DFL);
+}
+
 
 int main(void)
 {
@@ -153,13 +272,14 @@ int main(void)
 	}
 */
 	offset = PRP_BASE % psize;
-	printf("setting buffer size%s", "\n");
-	const size_t buffer_size = 2*240*220;
+	printf("setting buffer size%s / offset: %d", "\n", offset);
+	const size_t buffer_size = 2*352*288;
 
 	printf("allocating %d bytes for camera buffer\n", buffer_size);
-	u_int32_t camera_buffer = mmap((void*) 0x00, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, PRP_BASE-offset);
+	//u_int32_t camera_buffer = mmap((void*) 0x00, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, PRP_BASE-offset);
+	u_int32_t camera_buffer = malloc(buffer_size);
 
-	if(camera_buffer == -1) {
+	if(camera_buffer == NULL) {
    	      printf("can't map camera buffer space\r\n");
               goto EXIT;
 	}
@@ -170,23 +290,46 @@ int main(void)
 	// add the calculated offset to the mapped pointer and set the PRP struct pointer address to the result
 	prp_regs = mem_ptr + offset;
 
+	backupDest1 =  prp_regs->PRP_DEST_RGB1_PTR;
+	backupDest2 =  prp_regs->PRP_DEST_RGB2_PTR;
 
 	printf("set_prp(%02x)\n", camera_buffer); 
-	set_prp(camera_buffer);
+	set_prp(camera_buffer, camera_buffer);
+
+	//enable_camera();
+
+	int j;
+
+	const int run_count = 10;
+
+
+	printf("running %d times: \n", run_count);
+	for(j=0; j<run_count; j++) {
 	int i=0;
-	printf("debug output: %s", "\n");
-	for(i=0; i<buffer_size; i++) {
-		char c =  *((char*)camera_buffer + i);	
+	int non_white = 0;
+	long sum = 0;
+
+	for(i=0; i<buffer_size/2; i++) {
+		short c =  *((short*)camera_buffer + i);	
 		if(c != 0) {
-			printf("%d: %02x\n ", i, c); 
+			non_white ++;
+			sum += (long) c;
+			//printf("%d: %02x\n ", i, c); 
 		}
 	}
-
-
-	printf("freeing memory%s", "\n");
-	free(camera_buffer);
+		printf("non-white characters: %d / average: %.07f\n", non_white, sum / (float) non_white);	
+		sleep(1);
+	}
 
 	
+
+	printf("freeing memory%s", "\n");
+
+	// reset destinations to previous backup before we modified them
+	set_prp(backupDest1, backupDest2);
+	free(camera_buffer);
+
+	disable_camera();	
 EXIT:
 	// close the memory device
 	if(close(fd) == -1)
