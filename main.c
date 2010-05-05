@@ -196,9 +196,10 @@ void ex_program(int sig) {
 }
 
 
-int main(void)
+int main(int argc, const char* argv[])
 {
 	int fd, psize, offset;
+	int fd2 = 0;
 	/*
 	u_int32_t fb_base;
 	u_int32_t *fb_base_ptr;
@@ -278,14 +279,55 @@ int main(void)
 
 	printf("allocating %d bytes for camera buffer\n", buffer_size);
 
-	u_int32_t camera_buffer_source = malloc(buffer_size);	
-	offset = camera_buffer_source % psize;
+	u_int32_t camera_buffer_source;
+	u_int32_t camera_buffer;
 
-	u_int32_t camera_buffer = mmap((void*) 0x00, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, camera_buffer_source-offset);
+	int testMode = 1;
 
-	if(camera_buffer == NULL) {
-   	      printf("can't map camera buffer space\r\n");
-              goto EXIT;
+	if(argc == 2) {
+		if(argv[1][0] == '1') {
+			testMode = 1;
+		} else if(argv[1][0] == '2') {
+			testMode = 2;
+		}
+	}
+
+	if(testMode == 1) {
+	/*
+		the idea is to allocate memory with malloc and get 
+		a shared memory pointer for accessing it by calling 
+		mmap. the resulting address is passed into set_prp
+	*/
+		printf("running in testMode 1\n");
+		camera_buffer_source = malloc(buffer_size);	
+		offset = camera_buffer_source % psize;
+
+		camera_buffer = mmap((void*) 0x00, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, camera_buffer_source-offset);
+
+		if(camera_buffer == NULL) {
+	   	      printf("can't map camera buffer space\r\n");
+	              goto EXIT;
+		}
+	} else if(testMode == 2) {
+	/*
+		the idea is to allocate memory by opening a file 
+		with open() and getting shared memory access to it by 
+		calling mmap(). the resulting address is passed into set_prp
+	*/	
+		printf("running in testMode 2\n");
+		fd2 = open("/tmp/sensor", O_RDWR | O_CREAT);
+	        if(fd2 == -1)
+	        {
+	                printf("can't open /tmp/sensor\r\n");
+	                goto EXIT;
+        	}
+
+	        camera_buffer = mmap((void*) 0x00, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd2, 0);
+
+	        if(camera_buffer == NULL) {
+	              printf("can't map camera buffer space\r\n");
+	              goto EXIT;
+		}
 	}
 
 	offset = PRP_BASE % psize;
@@ -314,7 +356,7 @@ int main(void)
 	int non_white = 0;
 	long sum = 0;
 
-	for(i=0; i<buffer_size/2; i++) {
+	for(i=0; i<buffer_size; i++) {
 		unsigned char c =  *((unsigned char*)camera_buffer + i);	
 		if(c != 0) {
 			non_white ++;
@@ -322,19 +364,29 @@ int main(void)
 			//printf("%d: %02x\n ", i, c); 
 		}
 	}
-		printf("non-white characters: %d / average: %.07f\n", non_white, sum / (float) non_white);	
+		if(non_white != 0) {
+			printf("non-white characters: %d / average: %.07f\n", non_white, sum / (float) non_white);	
+		} else {
+			printf("no non-white characters found\n");
+		}
 		sleep(1);
 	}
 
 	
 
-	printf("freeing memory%s", "\n");
+	printf("freeing memory\n");
 
 	// reset destinations to previous backup before we modified them
 	set_prp(backupDest1, backupDest2);
-	free(camera_buffer_source);
+//	free(camera_buffer_source);
 
 	disable_camera();	
+
+	if(fd2 != 0 && close(fd2) == -1) {
+		printf("can't close /tmp/sensor\r\n");
+	}
+
+
 EXIT:
 	// close the memory device
 	if(close(fd) == -1)

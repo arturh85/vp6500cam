@@ -1,0 +1,6 @@
+Attempts to capture the video stream of the VP6500
+
+Usage:
+	./cameratest 1: running in testmode 1 (using malloc+mmap)
+	./cameratest 2: running in testmode 2 (using open+mmap)
+
