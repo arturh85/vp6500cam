@@ -24,9 +24,6 @@
 
 void ex_program(int sig);
 
-u_int32_t backupDest1;
-u_int32_t backupDest2;
-
 typedef struct _fmt_struct
 {
 	u_int16_t	width;
@@ -80,6 +77,7 @@ void *mem_ptr;
 // set the PRP registers, values taken from the product test script
 void set_prp(u_int32_t dest1, u_int32_t dest2)
 {
+	printf("set_prp(0x%08x, 0x%08x)\n", dest1, dest2);
 	prp_regs->PRP_CNTL = 0x3234;
 	prp_regs->PRP_SRC_PIXEL_FORMAT_CNTL = 0x2CA00565;
 	prp_regs->PRP_CH1_PIXEL_FORMAT_CNTL = 0x2CA00565;
@@ -104,6 +102,7 @@ void set_prp(u_int32_t dest1, u_int32_t dest2)
 }
 
 void enable_camera() {
+	printf("enabling camera\n");
 	int fd, result;
 
 	u_int16_t contrast;
@@ -163,6 +162,7 @@ EXIT2:
 }
 
 void disable_camera() {
+	printf("disabling camera...\n");
         int fd, result;
 
         fd = open("/dev/sensor", O_RDWR);
@@ -176,15 +176,13 @@ void disable_camera() {
         if(result != 0)
                 printf("error in stop capture IOCTL, got %i\r\n",result);
 	else 
-		printf("successfully disabled camera device with results \n", result);
-
+		printf("successfully disabled camera device with result: %d \n", result);
 
 EXIT3:
         if(close(fd) == -1)
         {
                 printf("can't close /dev/sensor\r\n");
         }
-
 }
 
 
@@ -219,62 +217,8 @@ int main(int argc, const char* argv[])
 	
 	printf("pagesize = %i\r\n", psize);
 
-/*
-	// calculate the offset from mapable memory address (multiple of pagesize) to the register holding the frame buffer address
-	offset = FB_START_REG % psize;
-	printf("fbreg offset = %X\r\n", offset);
-
-	// map that register to a local pointer
-	mem_ptr = mmap((void*) 0x00, offset+4, PROT_READ | PROT_WRITE, MAP_SHARED, fd, FB_START_REG-offset);
-	if(mem_ptr == (void*)-1)
-	{
-		printf("can't map FB START registers\r\n");
-		goto EXIT;
-	}
-
-	// retrieve the framebuffer memory address from that register
-	fb_base_ptr = mem_ptr + offset;
-	fb_base = fb_base_ptr[0];
-
-	printf("fbreg base = %8X\r\n", fb_base);
-
-	// unmap the memory
-	if(munmap((void*)mem_ptr, offset+4) == -1)
-	{
-		printf("can't unmap FB START registers\r\n");
-		goto EXIT;
-	}
-
-	//  calculate the offset from mapable memory address (multiple of pagesize) to the PRP register set
 	offset = PRP_BASE % psize;
-	printf("prpreg offset = %8X\r\n", offset);
-
-	// map local pointer to the calculated base address
-	mem_ptr = mmap((void*) 0x00, offset+132, PROT_READ | PROT_WRITE, MAP_SHARED, fd, PRP_BASE-offset);
-
-	// add the calculated offset to the mapped pointer and set the PRP struct pointer address to the result
-	prp_regs = mem_ptr + offset;
-
-	if(mem_ptr == (void*)-1)
-	{
-		printf("can't map PRP registers\r\n");
-		goto EXIT;
-	}
-
-	printf("prp regs base %8X\r\n", (u_int32_t)prp_regs);
-
-	// set the PRP registers
-	set_prp(fb_base);
-	
-	// unmap the memory
-	if(munmap((void*)mem_ptr, offset+132) == -1)
-	{
-		printf("can't unmap PRP registers\r\n");
-		goto EXIT;
-	}
-*/
-	offset = PRP_BASE % psize;
-	printf("setting buffer size / offset: %d\n", offset);
+	printf("PRP_BASE offset: %d\n", offset);
 	const size_t buffer_size = 2*352*288;
 
 	printf("allocating %d bytes for camera buffer\n", buffer_size);
@@ -337,10 +281,6 @@ int main(int argc, const char* argv[])
 	// add the calculated offset to the mapped pointer and set the PRP struct pointer address to the result
 	prp_regs = mem_ptr + offset;
 
-	backupDest1 =  prp_regs->PRP_DEST_RGB1_PTR;
-	backupDest2 =  prp_regs->PRP_DEST_RGB2_PTR;
-
-	printf("set_prp(%02x)\n", camera_buffer); 
 	set_prp(camera_buffer, camera_buffer);
 
 	enable_camera();
@@ -353,21 +293,21 @@ int main(int argc, const char* argv[])
 	printf("running %d times: \n", run_count);
 	for(j=0; j<run_count; j++) {
 	int i=0;
-	int non_white = 0;
+	int non_black = 0;
 	long sum = 0;
 
 	for(i=0; i<buffer_size; i++) {
-		unsigned char c =  *((unsigned char*)camera_buffer + i);	
+		unsigned char c = *((unsigned char*)camera_buffer + i);	
 		if(c != 0) {
-			non_white ++;
+			non_black ++;
 			sum += (long) c;
 			//printf("%d: %02x\n ", i, c); 
 		}
 	}
-		if(non_white != 0) {
-			printf("non-white characters: %d / average: %.07f\n", non_white, sum / (float) non_white);	
+		if(non_black != 0) {
+			printf("non-black characters: %d / average: %.07f\n", non_black, sum / (float) non_black);	
 		} else {
-			printf("no non-white characters found\n");
+			printf("no non-black characters found\n");
 		}
 		sleep(1);
 	}
@@ -377,8 +317,10 @@ int main(int argc, const char* argv[])
 	printf("freeing memory\n");
 
 	// reset destinations to previous backup before we modified them
-	set_prp(backupDest1, backupDest2);
-//	free(camera_buffer_source);
+	set_prp(0, 0);
+	if(camera_buffer_source != 0) {
+		free(camera_buffer_source);
+	}
 
 	disable_camera();	
 
