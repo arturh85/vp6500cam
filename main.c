@@ -283,7 +283,7 @@ int main(int argc, const char* argv[])
             if(c != 0) {
                 non_black ++;
                 sum += (long) c;
-                printf("%d: %02x\n", i, c); 
+                ////printf("%d: %02x\n", i, c); 
             }
         }
 		if(non_black != 0) {
