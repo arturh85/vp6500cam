@@ -187,21 +187,18 @@ EXIT3:
 
 
 void ex_program(int sig) {
- printf("Wake up call ... !!! - Catched signal: %d ... !!\n", sig);
- disable_camera();
- (void) signal(SIGINT, SIG_DFL);
- exit(0);
+	printf("Wake up call ... !!! - Catched signal: %d ... !!\n", sig);
+	disable_camera();
+	(void) signal(SIGINT, SIG_DFL);
+	exit(0);
 }
-
 
 int main(int argc, const char* argv[])
 {
 	int fd, psize, offset;
-	int fd2 = 0;
-	/*
 	u_int32_t fb_base;
 	u_int32_t *fb_base_ptr;
-*/
+	u_int32_t camera_buffer;
 
 	// open the memory interface
 	fd = open("/dev/mem", O_RDWR);
@@ -211,102 +208,56 @@ int main(int argc, const char* argv[])
 		goto EXIT;
 	}
 
+	const size_t buffer_size = 2*352*288;
+
 	// get the pagesize
 	psize = getpagesize();
-
 	
 	printf("pagesize = %i\r\n", psize);
 
-	offset = PRP_BASE % psize;
-	printf("PRP_BASE offset: %d\n", offset);
-	const size_t buffer_size = 2*352*288;
+	// calculate the offset from mapable memory address (multiple of pagesize) to the register holding the frame buffer address
+	offset = FB_START_REG % psize;
+	printf("fbreg offset = %X\r\n", offset);
 
-	printf("allocating %d bytes for camera buffer\n", buffer_size);
-
-	u_int32_t camera_buffer_source;
-	u_int32_t camera_buffer;
-
-	int testMode = 1;
-
-	if(argc == 2) {
-		if(argv[1][0] == '1') {
-			testMode = 1;
-		} else if(argv[1][0] == '2') {
-			testMode = 2;
-		}
-	}
-
-	if(testMode == 1) {
-	/*
-		the idea is to allocate memory with malloc and get 
-		a shared memory pointer for accessing it by calling 
-		mmap. the resulting address is passed into set_prp
-	*/
-		printf("running in testMode 1\n");
-		camera_buffer_source = malloc(buffer_size);	
-        
-        
-		offset = camera_buffer_source % psize;
-        printf("camera buffer offset: %d\n", offset);
-		camera_buffer = mmap((void*) 0x00, offset + buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, camera_buffer_source-offset);
-
-        
-		if(camera_buffer == NULL) {
-	   	      printf("can't map camera buffer space\r\n");
-	              goto EXIT;
-		}
-	} else if(testMode == 2) {
-	/*
-		the idea is to allocate memory by opening a file 
-		with open() and getting shared memory access to it by 
-		calling mmap(). the resulting address is passed into set_prp
-	*/	
-		printf("running in testMode 2\n");
-/*
-                printf("writing /root/sensor\n");
-
-		FILE* tmpFile = fopen("/root/sensor", "rw");
-		
-		if(tmpFile == NULL) {
-                       printf("can't open /root/sensor\r\n");
-                       goto EXIT;
-		}
-
-		int i;
-		for(i=0; i<buffer_size; i++) {
-			if(fputc('.', tmpFile) == EOF) {
-				printf("failed to write into /root/sensor at i=%d\n", i);
-				printf("error code: %d\n", ferror(tmpFile));
-				perror(NULL);
-				goto EXIT;
-			}
-		}	
-            fclose(tmpFile);
-*/
+	// map that register to a local pointer
+	mem_ptr = mmap((void*) 0x00, offset+4, PROT_READ | PROT_WRITE, MAP_SHARED, fd, FB_START_REG-offset);
+	if(mem_ptr == (void*)-1)
+	{
+		printf("can't map FB START registers\r\n");
 		goto EXIT;
-		fd2 = open("/root/sensor", O_RDWR | O_CREAT);
-	        if(fd2 == -1)
-	        {
-	                printf("can't open /root/sensor\r\n");
-	                goto EXIT;
-        	}
-            
-            	printf("allocating buffer\n");
-	        camera_buffer = mmap((void*) 0x00, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd2, 0);
+	}
 
-	        if(camera_buffer == NULL) {
-	              printf("can't map camera buffer space\r\n");
-	              goto EXIT;
-		}
+	// retrieve the framebuffer memory address from that register
+	fb_base_ptr = mem_ptr + offset;
+	fb_base = fb_base_ptr[0];
+	camera_buffer = fb_base + buffer_size + 4096;
+	camera_buffer -= camera_buffer % psize;
+
+	printf("fbreg base = %8X\r\n", fb_base);
+
+	// unmap the memory
+	if(munmap((void*)mem_ptr, offset+4) == -1)
+	{
+		printf("can't unmap FB START registers\r\n");
+		goto EXIT;
 	}
 
 	offset = PRP_BASE % psize;
+	printf("prpreg offset = %8X\n", offset);
+	
 	// map local pointer to the calculated base address
 	mem_ptr = mmap((void*) 0x00, offset+132, PROT_READ | PROT_WRITE, MAP_SHARED, fd, PRP_BASE-offset);
 
 	// add the calculated offset to the mapped pointer and set the PRP struct pointer address to the result
 	prp_regs = mem_ptr + offset;
 
+	if(mem_ptr == (void*)-1)
+	{
+		printf("can't map PRP registers\r\n");
+		goto EXIT;
+	}
+
+	printf("prp regs base %8X\r\n", (u_int32_t)prp_regs);
 	set_prp(camera_buffer, camera_buffer);
 
 	msync((void*)mem_ptr, offset+132, MS_SYNC | MS_INVALIDATE);
@@ -328,7 +279,7 @@ int main(int argc, const char* argv[])
         long sum = 0;
 
         for(i=0; i<buffer_size; i++) {
-            unsigned char c = *((unsigned char*)camera_buffer_source + i);	
+            unsigned char c = *((unsigned char*)camera_buffer + i);	
             if(c != 0) {
                 non_black ++;
                 sum += (long) c;
@@ -349,9 +300,6 @@ int main(int argc, const char* argv[])
 
 	// reset destinations to previous backup before we modified them
 	set_prp(0, 0);
-	if(camera_buffer_source != 0) {
-		free(camera_buffer_source);
-	}
 
 	disable_camera();	
 
@@ -363,11 +311,6 @@ int main(int argc, const char* argv[])
 	}
     
     
-	if(fd2 != 0 && close(fd2) == -1) {
-		printf("can't close /root/sensor\r\n");
-	}
-
-
 EXIT:
 	// close the memory device
 	if(close(fd) == -1)
