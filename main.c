@@ -244,10 +244,13 @@ int main(int argc, const char* argv[])
 	*/
 		printf("running in testMode 1\n");
 		camera_buffer_source = malloc(buffer_size);	
+        
+        
 		offset = camera_buffer_source % psize;
+        printf("camera buffer offset: %d\n", offset);
+		camera_buffer = mmap((void*) 0x00, offset + buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, camera_buffer_source-offset);
 
-		camera_buffer = mmap((void*) 0x00, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, camera_buffer_source-offset);
-
+        
 		if(camera_buffer == NULL) {
 	   	      printf("can't map camera buffer space\r\n");
 	              goto EXIT;
@@ -259,13 +262,36 @@ int main(int argc, const char* argv[])
 		calling mmap(). the resulting address is passed into set_prp
 	*/	
 		printf("running in testMode 2\n");
-		fd2 = open("/tmp/sensor", O_RDWR | O_CREAT);
+/*
+                printf("writing /root/sensor\n");
+
+		FILE* tmpFile = fopen("/root/sensor", "rw");
+		
+		if(tmpFile == NULL) {
+                       printf("can't open /root/sensor\r\n");
+                       goto EXIT;
+		}
+
+		int i;
+		for(i=0; i<buffer_size; i++) {
+			if(fputc('.', tmpFile) == EOF) {
+				printf("failed to write into /root/sensor at i=%d\n", i);
+				printf("error code: %d\n", ferror(tmpFile));
+				perror(NULL);
+				goto EXIT;
+			}
+		}	
+            fclose(tmpFile);
+*/
+		goto EXIT;
+		fd2 = open("/root/sensor", O_RDWR | O_CREAT);
 	        if(fd2 == -1)
 	        {
-	                printf("can't open /tmp/sensor\r\n");
+	                printf("can't open /root/sensor\r\n");
 	                goto EXIT;
         	}
-
+            
+            	printf("allocating buffer\n");
 	        camera_buffer = mmap((void*) 0x00, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd2, 0);
 
 	        if(camera_buffer == NULL) {
@@ -283,31 +309,36 @@ int main(int argc, const char* argv[])
 
 	set_prp(camera_buffer, camera_buffer);
 
+	msync((void*)mem_ptr, offset+132, MS_SYNC | MS_INVALIDATE);
 	enable_camera();
 
 	int j;
 
 	const int run_count = 10;
+//    printf("manipulating the memory\n");
 
+//    *((unsigned char*) camera_buffer_source) = 1;
+//    *((unsigned char*) camera_buffer_source + 1) = 2;
+//    *((unsigned char*) camera_buffer + 3) = 3;
 
 	printf("running %d times: \n", run_count);
 	for(j=0; j<run_count; j++) {
-	int i=0;
-	int non_black = 0;
-	long sum = 0;
+        int i=0;
+        int non_black = 0;
+        long sum = 0;
 
-	for(i=0; i<buffer_size; i++) {
-		unsigned char c = *((unsigned char*)camera_buffer + i);	
-		if(c != 0) {
-			non_black ++;
-			sum += (long) c;
-			//printf("%d: %02x\n ", i, c); 
-		}
-	}
+        for(i=0; i<buffer_size; i++) {
+            unsigned char c = *((unsigned char*)camera_buffer_source + i);	
+            if(c != 0) {
+                non_black ++;
+                sum += (long) c;
+                printf("%d: %02x\n", i, c); 
+            }
+        }
 		if(non_black != 0) {
-			printf("non-black characters: %d / average: %.07f\n", non_black, sum / (float) non_black);	
+			printf("non-black characters: %d. average: %.07f. status: %02x\n", non_black, sum / (float) non_black, prp_regs->PRP_INTRSTATUS);	
 		} else {
-			printf("no non-black characters found\n");
+			printf("no non-black characters found. status: %02x\n", prp_regs->PRP_INTRSTATUS);
 		}
 		sleep(1);
 	}
@@ -324,8 +355,16 @@ int main(int argc, const char* argv[])
 
 	disable_camera();	
 
+	// unmap the memory
+	if(munmap((void*)mem_ptr, offset+4) == -1)
+	{
+		printf("can't unmap FB START registers\r\n");
+		goto EXIT;
+	}
+    
+    
 	if(fd2 != 0 && close(fd2) == -1) {
-		printf("can't close /tmp/sensor\r\n");
+		printf("can't close /root/sensor\r\n");
 	}
 
 
