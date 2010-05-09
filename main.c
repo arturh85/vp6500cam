@@ -12,6 +12,8 @@
 #define PRP_SIZE	132
 #define FB_START_REG	0x10021000
 
+const size_t camera_width = 352;
+const size_t camera_height = 288;
 
 #define		INIT			0x6C01
 #define		SET_CONTRAST		0x6C02
@@ -24,7 +26,7 @@
 
 void ex_program(int sig);
 
-typedef struct _fmt_struct
+struct _fmt_struct
 {
 	u_int16_t	width;
 	u_int16_t	height;
@@ -33,7 +35,7 @@ typedef struct _fmt_struct
 };
 
 
-typedef struct _PRP_STRUCT
+struct _PRP_STRUCT
 {
 	u_int32_t	PRP_CNTL;			// 10026400
 	u_int32_t	PRP_INTRCNTL;			// 10026404
@@ -87,7 +89,8 @@ void set_prp(u_int32_t dest1, u_int32_t dest2)
 	prp_regs->PRP_SOURCE_LINE_STRIDE = 0x0;
 	prp_regs->PRP_DEST_RGB1_PTR = dest1;
 	prp_regs->PRP_DEST_RGB2_PTR = dest2;
-	prp_regs->PRP_SOURCE_FRAME_SIZE = 0x01600120;	// 352x288
+	prp_regs->PRP_SOURCE_FRAME_SIZE = 0x01600120;	// 352x288=80256=0x13980  and 0x1600120=23068960
+//	prp_regs->PRP_SOURCE_FRAME_SIZE = 287 * camera_width * camera_height; // 287=0x11F
 
 	prp_regs->PRP_CH1_OUT_IMAGE_SIZE = 0x00B000B0;
 	prp_regs->PRP_CH1_LINE_STRIDE = 0x1E0;
@@ -208,7 +211,7 @@ int main(int argc, const char* argv[])
 		goto EXIT;
 	}
 
-	const size_t buffer_size = 2*352*288;
+	const size_t buffer_size = 2*camera_width*camera_height;
 
 	// get the pagesize
 	psize = getpagesize();
@@ -230,10 +233,20 @@ int main(int argc, const char* argv[])
 	// retrieve the framebuffer memory address from that register
 	fb_base_ptr = mem_ptr + offset;
 	fb_base = fb_base_ptr[0];
-	camera_buffer = fb_base + buffer_size + 4096;
-	camera_buffer -= camera_buffer % psize;
+
+	camera_buffer = fb_base;
+
+	const int camera_offset = camera_height * 355;
+
+	camera_buffer += camera_offset;
+
+	printf("camera offset: %8X\n", camera_offset);
+	printf("camera resolution %dx%d\n", camera_width, camera_height);
+
+	//camera_buffer -= camera_buffer % psize;
 
 	printf("fbreg base = %8X\r\n", fb_base);
+	printf("camera base = %8X\r\n", camera_buffer);
 
 	// unmap the memory
 	if(munmap((void*)mem_ptr, offset+4) == -1)
@@ -271,6 +284,10 @@ int main(int argc, const char* argv[])
 //    *((unsigned char*) camera_buffer_source) = 1;
 //    *((unsigned char*) camera_buffer_source + 1) = 2;
 //    *((unsigned char*) camera_buffer + 3) = 3;
+	const int wait_time = 2;
+
+	printf("waiting %d seconds\n", wait_time);
+	sleep(wait_time);
 
 	printf("running %d times: \n", run_count);
 	for(j=0; j<run_count; j++) {
@@ -279,7 +296,7 @@ int main(int argc, const char* argv[])
         long sum = 0;
 
         for(i=0; i<buffer_size; i++) {
-            unsigned char c = *((unsigned char*)camera_buffer + i);	
+            unsigned char c = 0; //*((unsigned char*)camera_buffer + i);	
             if(c != 0) {
                 non_black ++;
                 sum += (long) c;
